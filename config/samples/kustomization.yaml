@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- namespacelabel_v1alpha1_namespacelabel.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
