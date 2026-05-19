@@ -4,9 +4,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // NamespaceLabelSpec defines the desired state of NamespaceLabel
 type NamespaceLabelSpec struct {
 // Labels is the map of key-value pairs that should be applied to the Namespace
@@ -25,6 +22,8 @@ type NamespaceLabelStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Applied",type="boolean",JSONPath=".status.applied",description="Are labels applied"
+// +kubebuilder:printcolumn:name="Message",type="string",JSONPath=".status.message",description="Status message"
 
 // NamespaceLabel is the Schema for the namespacelabels API
 type NamespaceLabel struct {

@@ -14,7 +14,16 @@ spec:
     singular: namespacelabel
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - description: Are labels applied
+      jsonPath: .status.applied
+      name: Applied
+      type: boolean
+    - description: Status message
+      jsonPath: .status.message
+      name: Message
+      type: string
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: NamespaceLabel is the Schema for the namespacelabels API
