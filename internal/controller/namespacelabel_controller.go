@@ -21,10 +21,11 @@ import (
 )
 
 const (
-	namespaceLabelFinalizer = "namespacelabel.dana.exam/finalizer"
-	managedKeysAnnotation   = "namespacelabel.dana.exam/managed-keys"
-	protectedConfigMapName  = "protected-labels"
-	protectedConfigLocation = "default"
+	namespaceLabelFinalizer     = "namespacelabel.dana.exam/finalizer"
+	managedKeysAnnotation       = "namespacelabel.dana.exam/managed-keys"
+	protectedConfigMapName      = "protected-labels"
+	protectedConfigLocation     = "default"
+	defaultProtectedPrefixesStr = "kubernetes.io/,k8s.io/"
 )
 
 // NamespaceLabelReconciler reconciles a NamespaceLabel object
@@ -46,202 +47,229 @@ func (r *NamespaceLabelReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if err := r.Get(ctx, req.NamespacedName, &namespaceLabelCR); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+
 	// TODO: For a production deployment, this Singleton validation should be
 	// moved to a Validating Admission Webhook to prevent etcd bloat.
-
 	if namespaceLabelCR.Name != "labels" {
 		logger.Info("Rejected CR: To prevent state collisions, the NamespaceLabel CR must be named exactly 'labels'.",
 			"GotName", namespaceLabelCR.Name,
 			"Namespace", namespaceLabelCR.Namespace)
-
 		return ctrl.Result{}, nil
 	}
-	logger.Info("Starting reconciliation for the NameSpace Label Operator")
-	var policyConfig corev1.ConfigMap
-	var protectedPrefixes []string
-	err := r.Get(ctx, types.NamespacedName{Name: protectedConfigMapName, Namespace: protectedConfigLocation}, &policyConfig)
 
-	if err == nil {
-		prefixesString := policyConfig.Data["protected-prefixes"]
-		protectedPrefixes = strings.Split(prefixesString, ",")
-	} else {
-		logger.Info("Policy ConfigMap not found, checking default protected labels")
-		protectedPrefixes = []string{"kubernetes.io/", "k8s.io/"}
+	logger.Info("Starting reconciliation for the NameSpace Label Operator")
+	protectedPrefixes := r.getProtectedPrefixes(ctx)
+
+	if !namespaceLabelCR.ObjectMeta.DeletionTimestamp.IsZero() {
+		return r.handleDelete(ctx, &namespaceLabelCR, protectedPrefixes)
 	}
 
-	isProtected := func(key string) bool {
-		for _, prefix := range protectedPrefixes {
-			if strings.HasPrefix(key, prefix) {
-				return true
+	return r.handleUpdate(ctx, &namespaceLabelCR, protectedPrefixes)
+}
+
+func (r *NamespaceLabelReconciler) handleUpdate(ctx context.Context, cr *namespacelabelv1alpha1.NamespaceLabel, protectedPrefixes []string) (ctrl.Result, error) {
+	logger := logf.FromContext(ctx)
+
+	// handle create or edit event
+
+	// add finalizer if missing
+	if !controllerutil.ContainsFinalizer(cr, namespaceLabelFinalizer) {
+		logger.Info("Adding Finalizer to CR")
+		controllerutil.AddFinalizer(cr, namespaceLabelFinalizer)
+		if err := r.Update(ctx, cr); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	// fetch the target Kubernetes Namespace
+	var targetNamespace corev1.Namespace
+	if err := r.Get(ctx, types.NamespacedName{Name: cr.Namespace}, &targetNamespace); err != nil {
+		logger.Error(err, "Failed to get target Namespace", "namespace", cr.Namespace)
+		cr.Status.Applied = false
+		cr.Status.Message = "Failed to find target Namespace"
+		_ = r.Status().Update(ctx, cr)
+
+		return ctrl.Result{}, err
+	}
+
+	// initialize maps if missing
+	if targetNamespace.Labels == nil {
+		targetNamespace.Labels = make(map[string]string)
+	}
+	if targetNamespace.Annotations == nil {
+		targetNamespace.Annotations = make(map[string]string)
+	}
+
+	// delete removed labels from CR
+	needsCleanupUpdate := r.removeStaleLabels(ctx, &targetNamespace, protectedPrefixes, cr.Spec.Labels)
+
+	// add or update current labels from CR
+	needsApplyUpdate, currentKeys, skippedProtected := r.applyNewLabels(ctx, &targetNamespace, protectedPrefixes, cr.Spec.Labels)
+
+	// update tracked annotation
+	newManagedKeysStr := strings.Join(currentKeys, ",")
+	if targetNamespace.Annotations[managedKeysAnnotation] != newManagedKeysStr {
+		targetNamespace.Annotations[managedKeysAnnotation] = newManagedKeysStr
+		needsCleanupUpdate = true // Re-using variable to trigger the Namespace update
+	}
+
+	// save the Namespace
+	if !needsCleanupUpdate && !needsApplyUpdate {
+		logger.Info("Namespace is already in the desired state.", "namespace", targetNamespace.Name)
+	} else {
+		if err := r.Update(ctx, &targetNamespace); err != nil {
+			logger.Error(err, "Failed to update target Namespace labels")
+			return ctrl.Result{}, err
+		}
+		logger.Info("Successfully updated labels", "namespace", targetNamespace.Name)
+	}
+
+	// update CR status
+	return r.updateCRStatus(ctx, cr, skippedProtected)
+}
+
+func (r *NamespaceLabelReconciler) handleDelete(ctx context.Context, cr *namespacelabelv1alpha1.NamespaceLabel, protectedPrefixes []string) (ctrl.Result, error) {
+	logger := logf.FromContext(ctx)
+	logger.Info("Starting Delete CR event of the namespace " + cr.Namespace)
+
+	if controllerutil.ContainsFinalizer(cr, namespaceLabelFinalizer) {
+		logger.Info("Cleanup triggered, removing managed labels")
+
+		var targetNamespace corev1.Namespace
+		if err := r.Get(ctx, types.NamespacedName{Name: cr.Namespace}, &targetNamespace); err == nil {
+
+			// Passing 'nil' for spec labels forces the helper to delete ALL managed keys
+			needsUpdate := r.removeStaleLabels(ctx, &targetNamespace, protectedPrefixes, nil)
+
+			// cleanup annotation
+			if _, hasAnnotation := targetNamespace.Annotations[managedKeysAnnotation]; hasAnnotation {
+				delete(targetNamespace.Annotations, managedKeysAnnotation)
+				needsUpdate = true
+			}
+
+			if needsUpdate {
+				if err := r.Update(ctx, &targetNamespace); err != nil {
+					logger.Error(err, "Failed to clean up target Namespace labels")
+					return ctrl.Result{}, err
+				}
+				logger.Info("Successfully cleaned up Namespace labels")
+			} else {
+				logger.Info("Namespace is already clean. Skipping API update.")
 			}
 		}
+
+		// remove finalizer to allow Kubernetes to permanently delete the CR
+		logger.Info("Removing Finalizer")
+		controllerutil.RemoveFinalizer(cr, namespaceLabelFinalizer)
+		if err := r.Update(ctx, cr); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	return ctrl.Result{}, nil
+}
+
+// helper methods :
+
+func (r *NamespaceLabelReconciler) getProtectedPrefixes(ctx context.Context) []string {
+	logger := logf.FromContext(ctx)
+	var policyConfig corev1.ConfigMap
+
+	err := r.Get(ctx, types.NamespacedName{Name: protectedConfigMapName, Namespace: protectedConfigLocation}, &policyConfig)
+	if err == nil {
+		prefixesString := policyConfig.Data["protected-prefixes"]
+		return strings.Split(prefixesString, ",")
+	}
+
+	logger.Info("Policy ConfigMap not found, checking default protected labels")
+	return strings.Split(defaultProtectedPrefixesStr, ",")
+}
+
+func (r *NamespaceLabelReconciler) isProtected(key string, protectedPrefixes []string) bool {
+	for _, prefix := range protectedPrefixes {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// deletes unwanted labels
+// If currentSpecLabels is nil, it assumes a full cleanup (Delete event)
+func (r *NamespaceLabelReconciler) removeStaleLabels(ctx context.Context, ns *corev1.Namespace, prefixes []string, currentSpecLabels map[string]string) bool {
+	logger := logf.FromContext(ctx)
+	needsUpdate := false
+
+	oldKeysString := ns.Annotations[managedKeysAnnotation]
+	if oldKeysString == "" {
 		return false
 	}
 
-	// check if the delete CR got triggered
-	if namespaceLabelCR.ObjectMeta.DeletionTimestamp.IsZero() {
-		// handle create or edit event
+	oldKeys := strings.Split(oldKeysString, ",")
+	for _, oldKey := range oldKeys {
+		_, existsInSpec := currentSpecLabels[oldKey]
 
-		// add finalizer if missing
-		if !controllerutil.ContainsFinalizer(&namespaceLabelCR, namespaceLabelFinalizer) {
-			logger.Info("Adding Finalizer to CR")
-			controllerutil.AddFinalizer(&namespaceLabelCR, namespaceLabelFinalizer)
-			if err := r.Update(ctx, &namespaceLabelCR); err != nil {
-				return ctrl.Result{}, err
-			}
-		}
-
-		// fetch the target Kubernetes Namespace
-		var targetNamespace corev1.Namespace
-
-		if err := r.Get(ctx, types.NamespacedName{Name: namespaceLabelCR.Namespace}, &targetNamespace); err != nil {
-			logger.Error(err, "Failed to get target Namespace", "namespace", namespaceLabelCR.Namespace)
-
-			namespaceLabelCR.Status.Applied = false
-			namespaceLabelCR.Status.Message = "Failed to find target Namespace"
-			_ = r.Status().Update(ctx, &namespaceLabelCR)
-
-			return ctrl.Result{}, err
-		}
-
-		// initialize maps if missing
-		if targetNamespace.Labels == nil {
-			targetNamespace.Labels = make(map[string]string)
-		}
-		if targetNamespace.Annotations == nil {
-			targetNamespace.Annotations = make(map[string]string)
-		}
-
-		// delete removed labels from CR
-		needsUpdate := false
-
-		oldKeysString := targetNamespace.Annotations[managedKeysAnnotation]
-		if oldKeysString != "" {
-			oldKeys := strings.Split(oldKeysString, ",")
-			for _, oldKey := range oldKeys {
-				if _, exists := namespaceLabelCR.Spec.Labels[oldKey]; !exists {
-					if isProtected(oldKey) {
-						logger.Info("Cannot delete label; it is protected", "key", oldKey)
-						continue
-					}
-					// checking if it exists
-					if _, hasLabel := targetNamespace.Labels[oldKey]; hasLabel {
-						logger.Info("Removing deleted label from Namespace", "key", oldKey)
-						delete(targetNamespace.Labels, oldKey)
-						needsUpdate = true
-					}
-				}
-			}
-		}
-
-		// add or update current labels from CR
-		var currentKeys []string
-		skippedProtected := false
-
-		for key, value := range namespaceLabelCR.Spec.Labels {
-			if isProtected(key) {
-				logger.Info("Skipping protected label in CR", "key", key)
-				skippedProtected = true
+		// If it's a full cleanup (currentSpecLabels is nil) OR the key was removed from the CR spec
+		if currentSpecLabels == nil || !existsInSpec {
+			if r.isProtected(oldKey, prefixes) {
+				logger.Info("Cannot delete/clean up label; it is protected", "key", oldKey)
 				continue
 			}
-			// Only trigger update if the label doesn't exist or the value is different
-			if targetNamespace.Labels[key] != value {
-				targetNamespace.Labels[key] = value
+
+			// checking if it exists
+			if _, hasLabel := ns.Labels[oldKey]; hasLabel {
+				logger.Info("Removing/Cleaning up label", "key", oldKey)
+				delete(ns.Labels, oldKey)
 				needsUpdate = true
 			}
-			currentKeys = append(currentKeys, key)
-		}
-
-		// update tracked annotation
-		newManagedKeysStr := strings.Join(currentKeys, ",")
-		if targetNamespace.Annotations[managedKeysAnnotation] != newManagedKeysStr {
-			targetNamespace.Annotations[managedKeysAnnotation] = newManagedKeysStr
-			needsUpdate = true
-		}
-
-		// save the Namespace
-		if !needsUpdate {
-			logger.Info("Namespace is already in the desired state.", "namespace", targetNamespace.Name)
-		} else {
-			if err := r.Update(ctx, &targetNamespace); err != nil {
-				logger.Error(err, "Failed to update target Namespace labels")
-				return ctrl.Result{}, err
-			}
-			logger.Info("Successfully updated labels", "namespace", targetNamespace.Name)
-		}
-
-		// update CR status
-		newApplied := true
-		newMessage := "Successfully synced all labels"
-		if skippedProtected {
-			newMessage = "Applied labels, but skipped protected keys"
-		}
-
-		// only make the API call if the status actually needs to change
-		if namespaceLabelCR.Status.Applied != newApplied || namespaceLabelCR.Status.Message != newMessage {
-			namespaceLabelCR.Status.Applied = newApplied
-			namespaceLabelCR.Status.Message = newMessage
-
-			if err := r.Status().Update(ctx, &namespaceLabelCR); err != nil {
-				logger.Error(err, "Failed to update CR status")
-				return ctrl.Result{}, err
-			}
-		}
-	} else {
-		logger.Info("Starting Delete CR event of the namespace" + namespaceLabelCR.Namespace)
-
-		if controllerutil.ContainsFinalizer(&namespaceLabelCR, namespaceLabelFinalizer) {
-			logger.Info("Cleanup triggered, removing managed labels")
-
-			var targetNamespace corev1.Namespace
-			if err := r.Get(ctx, types.NamespacedName{Name: namespaceLabelCR.Namespace}, &targetNamespace); err == nil {
-				needsUpdate := false
-
-				oldKeysString := targetNamespace.Annotations[managedKeysAnnotation]
-				if oldKeysString != "" {
-					oldKeys := strings.Split(oldKeysString, ",")
-					for _, oldKey := range oldKeys {
-						if isProtected(oldKey) {
-							logger.Info("Cannot clean up label; it is protected", "key", oldKey)
-							continue
-						}
-						// checking if it exists
-						if _, hasLabel := targetNamespace.Labels[oldKey]; hasLabel {
-							logger.Info("Cleaning up label", "key", oldKey)
-							delete(targetNamespace.Labels, oldKey)
-							needsUpdate = true
-						}
-					}
-				}
-
-				// cleanup
-				if _, hasAnnotation := targetNamespace.Annotations[managedKeysAnnotation]; hasAnnotation {
-					delete(targetNamespace.Annotations, managedKeysAnnotation)
-					needsUpdate = true
-				}
-
-				if needsUpdate {
-					if err := r.Update(ctx, &targetNamespace); err != nil {
-						logger.Error(err, "Failed to clean up target Namespace labels")
-						return ctrl.Result{}, err
-					}
-					logger.Info("Successfully cleaned up Namespace labels")
-				} else {
-					logger.Info("Namespace is already clean. Skipping API update.")
-				}
-			}
-
-			// remove finalizer to allow Kubernetes to permanently delete the CR
-			logger.Info("Removing Finalizer")
-			controllerutil.RemoveFinalizer(&namespaceLabelCR, namespaceLabelFinalizer)
-			if err := r.Update(ctx, &namespaceLabelCR); err != nil {
-				return ctrl.Result{}, err
-			}
-
-			return ctrl.Result{}, nil
 		}
 	}
+	return needsUpdate
+}
 
+func (r *NamespaceLabelReconciler) applyNewLabels(ctx context.Context, ns *corev1.Namespace, prefixes []string, currentSpecLabels map[string]string) (bool, []string, bool) {
+	logger := logf.FromContext(ctx)
+	needsUpdate := false
+	skippedProtected := false
+	var currentKeys []string
+
+	for key, value := range currentSpecLabels {
+		if r.isProtected(key, prefixes) {
+			logger.Info("Skipping protected label in CR", "key", key)
+			skippedProtected = true
+			continue
+		}
+
+		// Only trigger update if the label doesn't exist or the value is different
+		if ns.Labels[key] != value {
+			ns.Labels[key] = value
+			needsUpdate = true
+		}
+		currentKeys = append(currentKeys, key)
+	}
+
+	return needsUpdate, currentKeys, skippedProtected
+}
+
+func (r *NamespaceLabelReconciler) updateCRStatus(ctx context.Context, cr *namespacelabelv1alpha1.NamespaceLabel, skippedProtected bool) (ctrl.Result, error) {
+	logger := logf.FromContext(ctx)
+
+	newApplied := true
+	newMessage := "Successfully synced all labels"
+	if skippedProtected {
+		newMessage = "Applied labels, but skipped protected keys"
+	}
+
+	// only make the API call if the status actually needs to change
+	if cr.Status.Applied != newApplied || cr.Status.Message != newMessage {
+		cr.Status.Applied = newApplied
+		cr.Status.Message = newMessage
+
+		if err := r.Status().Update(ctx, cr); err != nil {
+			logger.Error(err, "Failed to update CR status")
+			return ctrl.Result{}, err
+		}
+	}
 	return ctrl.Result{}, nil
 }
 
