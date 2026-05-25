@@ -6,15 +6,15 @@ import (
 
 // NamespaceLabelSpec defines the desired state of NamespaceLabel
 type NamespaceLabelSpec struct {
-// Labels is the map of key-value pairs that should be applied to the Namespace
-// +kubebuilder:validation:Required
+	// Labels is the map of key-value pairs that should be applied to the Namespace
+	// +kubebuilder:validation:Required
 	Labels map[string]string `json:"labels"`
 }
 
 // NamespaceLabelStatus defines the observed state of NamespaceLabel.
 type NamespaceLabelStatus struct {
 	// Applied indicates if the labels were successfully synced to the Namespace
-	Applied bool   `json:"applied"`
+	Applied bool `json:"applied"`
 
 	// Message provides details about the sync status, such as failure reasons
 	Message string `json:"message,omitempty"`

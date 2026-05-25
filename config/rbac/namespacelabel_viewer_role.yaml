@@ -11,6 +11,7 @@ metadata:
   labels:
     app.kubernetes.io/name: namespacelabel-assignment-shv
     app.kubernetes.io/managed-by: kustomize
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
   name: namespacelabel-viewer-role
 rules:
 - apiGroups:

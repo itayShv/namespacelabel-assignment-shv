@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: protected-labels.yml
+  name: protected-labels
   namespace: default
 data:
   protected-prefixes: "kubernetes.io/,k8s.io/,itays.protected/"

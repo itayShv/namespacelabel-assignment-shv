@@ -1,0 +1,9 @@
+apiVersion: namespacelabel.dana.exam/v1alpha1
+kind: NamespaceLabel
+metadata:
+  name: labels
+  namespace: backend
+spec:
+  labels:
+    test-team: backend
+    test-env: dev
