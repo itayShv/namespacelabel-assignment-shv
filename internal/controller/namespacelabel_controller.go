@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -54,6 +55,13 @@ func (r *NamespaceLabelReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		logger.Info("Rejected CR: To prevent state collisions, the NamespaceLabel CR must be named exactly 'labels'.",
 			"GotName", namespaceLabelCR.Name,
 			"Namespace", namespaceLabelCR.Namespace)
+
+		if namespaceLabelCR.Status.Message != "Rejected: CR must be named 'labels'" {
+			namespaceLabelCR.Status.Applied = false
+			namespaceLabelCR.Status.Message = "Rejected: CR must be named 'labels'"
+			_ = r.Status().Update(ctx, &namespaceLabelCR)
+		}
+
 		return ctrl.Result{}, nil
 	}
 
@@ -69,7 +77,6 @@ func (r *NamespaceLabelReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 func (r *NamespaceLabelReconciler) handleUpdate(ctx context.Context, cr *namespacelabelv1alpha1.NamespaceLabel, protectedPrefixes []string) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx)
-
 	// handle create or edit event
 
 	// add finalizer if missing
@@ -79,6 +86,9 @@ func (r *NamespaceLabelReconciler) handleUpdate(ctx context.Context, cr *namespa
 		if err := r.Update(ctx, cr); err != nil {
 			return ctrl.Result{}, err
 		}
+
+		// ResourceVersion has changed . immediately requeue with the fresh object
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// fetch the target Kubernetes Namespace
@@ -107,10 +117,12 @@ func (r *NamespaceLabelReconciler) handleUpdate(ctx context.Context, cr *namespa
 	needsApplyUpdate, currentKeys, skippedProtected := r.applyNewLabels(ctx, &targetNamespace, protectedPrefixes, cr.Spec.Labels)
 
 	// update tracked annotation
+	sort.Strings(currentKeys)
 	newManagedKeysStr := strings.Join(currentKeys, ",")
+
 	if targetNamespace.Annotations[managedKeysAnnotation] != newManagedKeysStr {
 		targetNamespace.Annotations[managedKeysAnnotation] = newManagedKeysStr
-		needsCleanupUpdate = true // Re-using variable to trigger the Namespace update
+		needsCleanupUpdate = true // trigger the Namespace update flag
 	}
 
 	// save the Namespace
@@ -178,10 +190,16 @@ func (r *NamespaceLabelReconciler) getProtectedPrefixes(ctx context.Context) []s
 	err := r.Get(ctx, types.NamespacedName{Name: protectedConfigMapName, Namespace: protectedConfigLocation}, &policyConfig)
 	if err == nil {
 		prefixesString := policyConfig.Data["protected-prefixes"]
-		return strings.Split(prefixesString, ",")
+
+		// guard against empty strings or missing keys
+		if strings.TrimSpace(prefixesString) != "" {
+			return strings.Split(prefixesString, ",")
+		}
+		logger.Info("ConfigMap found, but 'protected-prefixes' key is empty or missing. using default protected labels")
+	} else {
+		logger.Info("Policy ConfigMap not found, using default protected labels")
 	}
 
-	logger.Info("Policy ConfigMap not found, checking default protected labels")
 	return strings.Split(defaultProtectedPrefixesStr, ",")
 }
 
@@ -212,13 +230,13 @@ func (r *NamespaceLabelReconciler) removeStaleLabels(ctx context.Context, ns *co
 		// If it's a full cleanup (currentSpecLabels is nil) OR the key was removed from the CR spec
 		if currentSpecLabels == nil || !existsInSpec {
 			if r.isProtected(oldKey, prefixes) {
-				logger.Info("Cannot delete/clean up label; it is protected", "key", oldKey)
+				logger.Info("Cannot delete label; it is protected", "key", oldKey)
 				continue
 			}
 
 			// checking if it exists
 			if _, hasLabel := ns.Labels[oldKey]; hasLabel {
-				logger.Info("Removing/Cleaning up label", "key", oldKey)
+				logger.Info("Removing label", "key", oldKey)
 				delete(ns.Labels, oldKey)
 				needsUpdate = true
 			}
@@ -283,7 +301,7 @@ func (r *NamespaceLabelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// drift detection: triggers only when a Namespace's labels are modified
 		Watches(
 			&corev1.Namespace{},
-			handler.EnqueueRequestsFromMapFunc(r.findCustomResourcesInNamespace),
+			handler.EnqueueRequestsFromMapFunc(r.getCustomResourcesInNamespace),
 			builder.WithPredicates(r.namespaceLabelDriftPredicate()),
 		).
 		Complete(r)
@@ -294,17 +312,20 @@ func (r *NamespaceLabelReconciler) namespaceLabelDriftPredicate() predicate.Pred
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			oldNs, okOld := e.ObjectOld.(*corev1.Namespace)
 			newNs, okNew := e.ObjectNew.(*corev1.Namespace)
+			// if the change is in a namespace (if the fetch succeeded)
 			if !okOld || !okNew {
 				return false
 			}
 
-			// Read the annotation YOUR Reconcile loop wrote!
+			// check if there are any managed labels
 			managedKeysStr := newNs.GetAnnotations()[managedKeysAnnotation]
 			if managedKeysStr == "" {
 				return false
 			}
 
 			keys := strings.Split(managedKeysStr, ",")
+			// checks diffs between the namespace's labels
+
 			for _, key := range keys {
 				if oldNs.GetLabels()[key] != newNs.GetLabels()[key] {
 					return true
@@ -312,20 +333,22 @@ func (r *NamespaceLabelReconciler) namespaceLabelDriftPredicate() predicate.Pred
 			}
 			return false
 		},
+		// return false for other namespace changes
 		CreateFunc:  func(e event.CreateEvent) bool { return false },
 		DeleteFunc:  func(e event.DeleteEvent) bool { return false },
 		GenericFunc: func(e event.GenericEvent) bool { return false },
 	}
 }
 
-func (r *NamespaceLabelReconciler) findCustomResourcesInNamespace(ctx context.Context, obj client.Object) []reconcile.Request {
+func (r *NamespaceLabelReconciler) getCustomResourcesInNamespace(ctx context.Context, obj client.Object) []reconcile.Request {
 	ns, ok := obj.(*corev1.Namespace)
+	// is casting the event into namespace succeeded
 	if !ok {
 		return nil
 	}
 
 	var crList namespacelabelv1alpha1.NamespaceLabelList
-	// List ALL NamespaceLabel CRs in this namespace, regardless of what they are named
+	// List ALL NamespaceLabel CRs in this namespace, drop if there is none \ theres an error
 	if err := r.List(ctx, &crList, client.InNamespace(ns.Name)); err != nil || len(crList.Items) == 0 {
 		return nil
 	}

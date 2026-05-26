@@ -26,26 +26,22 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 		It("Should handle the complete lifecycle (CRUD, Singleton, Drift, Cleanup)", func() {
 			ctx := context.Background()
 
-			// ---------------------------------------------------------
 			// SETUP: Create a real namespace with an unmanaged label
-			// ---------------------------------------------------------
 			nsName := "test-namespace"
 			targetNamespace := &corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: nsName,
 					Labels: map[string]string{
 						"unmanaged-label":             "do-not-touch",
-						"kubernetes.io/metadata.name": "test-namespace", // Native protected label
+						"kubernetes.io/metadata.name": "test-namespace", // protected label
 					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, targetNamespace)).Should(Succeed())
 
-			// ---------------------------------------------------------
-			// EDGE CASE 2: Singleton Name Validation
-			// ---------------------------------------------------------
+			// Singleton Name Validation
 			wrongNameCR := &namespacelabelv1alpha1.NamespaceLabel{
-				ObjectMeta: metav1.ObjectMeta{Name: "wrong-name", Namespace: nsName},
+				ObjectMeta: metav1.ObjectMeta{Name: "should-be-named-labels", Namespace: nsName},
 				Spec: namespacelabelv1alpha1.NamespaceLabelSpec{
 					Labels: map[string]string{"foo": "bar"},
 				},
@@ -60,10 +56,8 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 			}, time.Second*2, interval).Should(BeFalse(), "Controller should ignore CRs not named 'labels'")
 			Expect(k8sClient.Delete(ctx, wrongNameCR)).Should(Succeed())
 
-			// ---------------------------------------------------------
-			// EDGE CASE 3 & 4: Creating first time (no ConfigMap)
+			// Creating first time (no ConfigMap and Annotations)
 			// AND validating protected prefixes are ignored on creation
-			// ---------------------------------------------------------
 			validCR := &namespacelabelv1alpha1.NamespaceLabel{
 				ObjectMeta: metav1.ObjectMeta{Name: "labels", Namespace: nsName},
 				Spec: namespacelabelv1alpha1.NamespaceLabelSpec{
@@ -89,13 +83,11 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 				Not(HaveKey("kubernetes.io/hacked")),                              // Protected prefix creation BLOCKED
 			))
 
-			// ---------------------------------------------------------
-			// EDGE CASE 5: Validate protected prefixes cannot be deleted
-			// ---------------------------------------------------------
+			// Validate protected prefixes cannot be deleted
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "labels", Namespace: nsName}, validCR)).Should(Succeed())
 			validCR.Spec.Labels = map[string]string{
-				"team": "backend", // Kept
-				"env":  "prod",    // CRUD: Update
+				"team": "backend",
+				"env":  "prod", // add this
 			}
 			Expect(k8sClient.Update(ctx, validCR)).Should(Succeed())
 
@@ -108,9 +100,7 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 				HaveKeyWithValue("kubernetes.io/metadata.name", "test-namespace"), // Protected prefix deletion BLOCKED
 			))
 
-			// ---------------------------------------------------------
-			// EDGE CASE 6: Drift change (Admin deletes a managed label)
-			// ---------------------------------------------------------
+			// Drift change (Admin deletes a managed label)
 			var currentNs corev1.Namespace
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &currentNs)).Should(Succeed())
 
@@ -118,16 +108,14 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 			delete(currentNs.Labels, "team")
 			Expect(k8sClient.Update(ctx, &currentNs)).Should(Succeed())
 
-			// The Watcher & Drift Predicate should instantly put it back
+			// Validate that the Drift Predicate puts it back
 			Eventually(func() map[string]string {
 				var ns corev1.Namespace
 				k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &ns)
 				return ns.Labels
 			}, timeout, interval).Should(HaveKeyWithValue("team", "backend"))
 
-			// ---------------------------------------------------------
-			// EDGE CASE 7: Complete Cleanup (CRUD: Delete)
-			// ---------------------------------------------------------
+			// Complete Cleanup CRUD: Delete
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "labels", Namespace: nsName}, validCR)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, validCR)).Should(Succeed())
 
@@ -152,6 +140,71 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 	})
 
 	Context("Advanced Edge Cases", func() {
+		It("Should completely wipe managed labels if the CR Spec is emptied", func() {
+			ctx := context.Background()
+			nsName := "test-empty-wipe"
+			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsName}}
+			Expect(k8sClient.Create(ctx, ns)).Should(Succeed())
+
+			cr := &namespacelabelv1alpha1.NamespaceLabel{
+				ObjectMeta: metav1.ObjectMeta{Name: "labels", Namespace: nsName},
+				Spec: namespacelabelv1alpha1.NamespaceLabelSpec{
+					Labels: map[string]string{"temp-key": "temp-value"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, cr)).Should(Succeed())
+
+			// Wait for the label to appear
+			Eventually(func() map[string]string {
+				var fetchedNs corev1.Namespace
+				k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &fetchedNs)
+				return fetchedNs.Labels
+			}, timeout, interval).Should(HaveKeyWithValue("temp-key", "temp-value"))
+
+			// User updates the CR to have NO labels
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "labels", Namespace: nsName}, cr)).Should(Succeed())
+			cr.Spec.Labels = map[string]string{} // Empty map
+			Expect(k8sClient.Update(ctx, cr)).Should(Succeed())
+
+			// Verify the label was wiped from the Namespace
+			Eventually(func() map[string]string {
+				var fetchedNs corev1.Namespace
+				k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &fetchedNs)
+				return fetchedNs.Labels
+			}, timeout, interval).ShouldNot(HaveKey("temp-key"))
+		})
+
+		It("Should correctly update the Status subresource", func() {
+			ctx := context.Background()
+			nsName := "test-status-update"
+			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsName}}
+			Expect(k8sClient.Create(ctx, ns)).Should(Succeed())
+
+			cr := &namespacelabelv1alpha1.NamespaceLabel{
+				ObjectMeta: metav1.ObjectMeta{Name: "labels", Namespace: nsName},
+				Spec: namespacelabelv1alpha1.NamespaceLabelSpec{
+					Labels: map[string]string{
+						"valid":            "ok",
+						"kubernetes.io/no": "blocked", // Protected
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, cr)).Should(Succeed())
+
+			// Verify the Status fields are populated correctly indicating a partial success
+			Eventually(func() string {
+				var fetchedCR namespacelabelv1alpha1.NamespaceLabel
+				k8sClient.Get(ctx, types.NamespacedName{Name: "labels", Namespace: nsName}, &fetchedCR)
+				return fetchedCR.Status.Message
+			}, timeout, interval).Should(Equal("Applied labels, but skipped protected keys"))
+
+			Eventually(func() bool {
+				var fetchedCR namespacelabelv1alpha1.NamespaceLabel
+				k8sClient.Get(ctx, types.NamespacedName{Name: "labels", Namespace: nsName}, &fetchedCR)
+				return fetchedCR.Status.Applied
+			}, timeout, interval).Should(BeTrue())
+		})
+
 		It("Should handle stale annotation cleanup (Self-Healing)", func() {
 			ctx := context.Background()
 			nsName := "test-stale-cleanup"
@@ -221,7 +274,7 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 				return fetchedCR.Finalizers
 			}, timeout, interval).Should(ContainElement(namespaceLabelFinalizer))
 
-			// DANGER: Delete the target Namespace FIRST
+			// Delete the target Namespace FIRST
 			Expect(k8sClient.Delete(ctx, ns)).Should(Succeed())
 
 			// Now attempt to delete the CR
@@ -246,7 +299,7 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 			// Create custom ConfigMap
 			cm := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{Name: protectedConfigMapName, Namespace: protectedConfigLocation},
-				Data:       map[string]string{"protected-prefixes": "kubernetes.io/,k8s.io/,dana.io/"},
+				Data:       map[string]string{"protected-prefixes": "kubernetes.io/,k8s.io/,shviros.label/"},
 			}
 
 			// Ensure clean state in EnvTest for the default namespace
@@ -257,24 +310,23 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 				ObjectMeta: metav1.ObjectMeta{Name: "labels", Namespace: nsName},
 				Spec: namespacelabelv1alpha1.NamespaceLabelSpec{
 					Labels: map[string]string{
-						"dana.io/tenant": "123",    // Protected by our new CM!
-						"app":            "my-app", // Allowed
+						"shviros.label/tenant": "123",    // with a protected prefix
+						"app":                  "my-app", // Allowed
 					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, cr)).Should(Succeed())
 
-			// Verify the custom prefix in the ConfigMap blocks the creation of 'dana.io'
+			// Verify the custom prefix in the ConfigMap blocks the creation of 'shviros.label'
 			Eventually(func() map[string]string {
 				var fetchedNs corev1.Namespace
 				k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &fetchedNs)
 				return fetchedNs.Labels
 			}, timeout, interval).Should(SatisfyAll(
 				HaveKeyWithValue("app", "my-app"),
-				Not(HaveKey("dana.io/tenant")),
+				Not(HaveKey("shviros.label/tenant")),
 			))
 
-			// Cleanup the ConfigMap so it doesn't pollute other tests
 			Expect(k8sClient.Delete(ctx, cm)).Should(Succeed())
 		})
 	})
