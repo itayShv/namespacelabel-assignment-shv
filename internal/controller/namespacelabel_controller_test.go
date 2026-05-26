@@ -39,23 +39,6 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 			}
 			Expect(k8sClient.Create(ctx, targetNamespace)).Should(Succeed())
 
-			// Singleton Name Validation
-			wrongNameCR := &namespacelabelv1alpha1.NamespaceLabel{
-				ObjectMeta: metav1.ObjectMeta{Name: "should-be-named-labels", Namespace: nsName},
-				Spec: namespacelabelv1alpha1.NamespaceLabelSpec{
-					Labels: map[string]string{"foo": "bar"},
-				},
-			}
-			Expect(k8sClient.Create(ctx, wrongNameCR)).Should(Succeed())
-
-			Consistently(func() bool {
-				var ns corev1.Namespace
-				k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &ns)
-				_, exists := ns.Labels["foo"]
-				return exists
-			}, time.Second*2, interval).Should(BeFalse(), "Controller should ignore CRs not named 'labels'")
-			Expect(k8sClient.Delete(ctx, wrongNameCR)).Should(Succeed())
-
 			// Creating first time (no ConfigMap and Annotations)
 			// AND validating protected prefixes are ignored on creation
 			validCR := &namespacelabelv1alpha1.NamespaceLabel{

@@ -49,22 +49,6 @@ func (r *NamespaceLabelReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// TODO: For a production deployment, this Singleton validation should be
-	// moved to a Validating Admission Webhook to prevent etcd bloat.
-	if namespaceLabelCR.Name != "labels" {
-		logger.Info("Rejected CR: To prevent state collisions, the NamespaceLabel CR must be named exactly 'labels'.",
-			"GotName", namespaceLabelCR.Name,
-			"Namespace", namespaceLabelCR.Namespace)
-
-		if namespaceLabelCR.Status.Message != "Rejected: CR must be named 'labels'" {
-			namespaceLabelCR.Status.Applied = false
-			namespaceLabelCR.Status.Message = "Rejected: CR must be named 'labels'"
-			_ = r.Status().Update(ctx, &namespaceLabelCR)
-		}
-
-		return ctrl.Result{}, nil
-	}
-
 	logger.Info("Starting reconciliation for the NameSpace Label Operator")
 	protectedPrefixes := r.getProtectedPrefixes(ctx)
 
@@ -252,13 +236,14 @@ func (r *NamespaceLabelReconciler) applyNewLabels(ctx context.Context, ns *corev
 	var currentKeys []string
 
 	for key, value := range currentSpecLabels {
+		// dont let protected keys to get mannaged by the operator
 		if r.isProtected(key, prefixes) {
 			logger.Info("Skipping protected label in CR", "key", key)
 			skippedProtected = true
 			continue
 		}
 
-		// Only trigger update if the label doesn't exist or the value is different
+		// only trigger update if the label doesn't exist or the value is different
 		if ns.Labels[key] != value {
 			ns.Labels[key] = value
 			needsUpdate = true

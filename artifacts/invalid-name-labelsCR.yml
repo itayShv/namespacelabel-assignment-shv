@@ -1,9 +1,9 @@
 apiVersion: namespacelabel.dana.exam/v1alpha1
 kind: NamespaceLabel
 metadata:
-  name: labels
+  name: invalid-name
   namespace: backend
 spec:
   labels:
-    test-team: backend
+    test-team: invalid
     test-env: dev
