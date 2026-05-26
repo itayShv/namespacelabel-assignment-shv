@@ -12,7 +12,8 @@ The **NamespaceLabel Operator** solves this by providing a controlled, secure Cu
 This operator was designed with enterprise-grade security, performance, and lifecycle management in mind:
 
 * **Complete Lifecycle Management (CRUD):** Continuously syncs the state of the `NamespaceLabel` CR to the target Namespace. Supports creating, updating, and completely deleting managed labels.
-* **State Collision Prevention (The Singleton Pattern):** To solve the issue of multiple CRs fighting over the same Namespace, the operator enforces a strict Singleton pattern. It rejects any Custom Resource that is not named exactly `labels`, preventing state drift and etcd bloat.
+* **Validating Admission Webhook (Shift-Left Security):** Validation logic is pushed directly to the Kubernetes API Server front door. A custom webhook intercepts incoming requests and immediately rejects illegal actions before they are ever written to `etcd`. This ensures the core Reconciler only ever wakes up to process perfectly valid, sanitized data.
+* **State Collision Prevention (The Singleton Pattern):** To solve the issue of multiple CRs fighting over the same Namespace, the webhook enforces a strict Singleton pattern. It actively intercepts and blocks the creation or update of any Custom Resource that is not named exactly `labels`, instantly returning a clear error to the user's CLI.
 * **Protected Label Guardrails:** Dynamically fetches restricted prefixes from a central `protected-labels` ConfigMap. It actively prevents tenants from overwriting or deleting critical cluster-management labels (e.g., `kubernetes.io/`, `k8s.io/`).
 * **Native Tenant RBAC (Aggregated Roles):** By default, tenants cannot consume new CRDs. This operator utilizes Kubernetes **Aggregated ClusterRoles** (`aggregate-to-edit`, `aggregate-to-admin`). If a tenant has standard `edit` permissions for a namespace, the API Server dynamically merges the CRD permissions, allowing them to manage labels seamlessly without custom RoleBindings.
 * **Zero Privilege Escalation (Self-Targeting):** The Reconcile loop enforces a strict constraint: A `NamespaceLabel` CR can only modify the exact Namespace in which it resides, completely eliminating the risk of a tenant labeling out-of-scope production namespaces.
@@ -26,6 +27,7 @@ This operator was designed with enterprise-grade security, performance, and life
 * [Docker](https://docs.docker.com/get-docker/)
 * [Kind](https://kind.sigs.k8s.io/)
 * [Kubebuilder](https://book.kubebuilder.io/)
+* [Cert-Manager](https://cert-manager.io/) (Required for Webhook TLS)
 * [Ginkgo](https://onsi.github.io/ginkgo/)
 
 ---
@@ -53,7 +55,7 @@ Once the container builds, you can open a terminal inside VSCode and immediately
 
 ### Option A: Automated Deployment Script (`deploy.sh`)
 
-You can use the included bash script to automate the entire build, load, and deploy process into a local Kind cluster. 
+You can use the included bash script to automate the entire build, load, and deploy process into a local Kind cluster. Because this architecture uses a Validating Webhook, Cert-Manager must be installed first to provision local TLS certificates.
 
 Save the following as `deploy.sh` in the root of the project, run `chmod +x deploy.sh`, and execute it:
 
@@ -66,31 +68,40 @@ CLUSTER_NAME="operator-sandbox"
 IMG="namespacelabel-controller:dev"
 NAMESPACE="namespacelabel-assignment-shv-system"
 
-echo "🚀 Starting Deployment Process..."
+echo "Starting Deployment Process..."
 
 # 1. Create Kind cluster if it doesn't exist
 if ! kind get clusters | grep -q "^${CLUSTER_NAME}$"; then
   echo "📦 Creating Kind cluster '${CLUSTER_NAME}'..."
   kind create cluster --name ${CLUSTER_NAME}
 else
-  echo "✅ Kind cluster '${CLUSTER_NAME}' already exists."
+  echo "Kind cluster '${CLUSTER_NAME}' already exists."
 fi
 
+#Install Cert-Manager (Required for Webhook) only if missing
+if ! kubectl get deployment cert-manager -n cert-manager >/dev/null 2>&1; then
+  echo "Installing Cert-Manager for Webhook TLS..."
+  kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.4/cert-manager.yaml
+  
+  echo "Waiting for Cert-Manager Webhook to become available..."
+  # This waits intelligently instead of using a hardcoded sleep
+  kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout=120s
+else
+  echo "✅ Cert-Manager is already installed."
+fi
+
+
 # 2. Build the Docker Image
-echo "🔨 Building Docker image: ${IMG}..."
+echo "Building Docker image: ${IMG}..."
 make docker-build IMG=${IMG}
 
 # 3. Load Image into Kind
-echo "📥 Loading image into Kind cluster..."
+echo "Loading image into Kind cluster..."
 kind load docker-image ${IMG} --name ${CLUSTER_NAME}
 
 # 4. Deploy CRDs, RBAC, and Controller
-echo "🚀 Deploying operator to the cluster..."
+echo "Deploying operator to the cluster..."
 make deploy IMG=${IMG}
-
-echo "✅ Deployment complete! Waiting for pods to spin up..."
-sleep 5
-kubectl get pods -n ${NAMESPACE}
 
 ```
 
@@ -126,7 +137,7 @@ data:
 ### 2. Apply Tenant Labels (Tenant)
 
 Once the operator is running, apply a `NamespaceLabel` CR into your desired namespace.
-*Note: To satisfy the Singleton pattern, the CR must be named exactly `labels`.*
+*Note: To satisfy the Singleton pattern and pass the Webhook validation, the CR must be named exactly `labels`.*
 
 ```yaml
 apiVersion: namespacelabel.dana.exam/v1alpha1
@@ -148,6 +159,25 @@ kubectl apply -f config/samples/namespacelabel_v1alpha1_namespacelabel.yaml
 kubectl get namespace default --show-labels
 
 ```
+
+### 3. Verify the Webhook Bouncer
+
+To prove the Validating Webhook is working, attempt to apply a CR with an invalid name:
+
+```yaml
+apiVersion: namespacelabel.dana.exam/v1alpha1
+kind: NamespaceLabel
+metadata:
+  name: invalid-name
+  namespace: default
+spec:
+  labels:
+    tenant: rogue-team
+
+```
+
+The Kubernetes API Server will instantly reject the request, returning a custom error directly to your terminal:
+`Error from server (Forbidden): ... admission webhook "vnamespacelabel-v1alpha1.kb.io" denied the request: Rejected: To prevent state collisions, the NamespaceLabel CR must be named exactly 'labels'`
 
 ---
 
@@ -217,9 +247,5 @@ To completely remove the operator, its CRDs, and its RBAC permissions from the c
 
 ```bash
 make undeploy
-
-```
-
-```
 
 ```
