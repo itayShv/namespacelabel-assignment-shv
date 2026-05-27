@@ -1,11 +1,11 @@
 # Configuration
-CLUSTER_NAME="operator-sandbox"
+CLUSTER_NAME="shviro-cluster"
 IMG="namespacelabel-controller:dev"
 NAMESPACE="namespacelabel-assignment-shv-system"
 
 # 1. Create Kind cluster if it doesn't exist
 if ! kind get clusters | grep -q "^${CLUSTER_NAME}$"; then
-  echo "📦 Creating Kind cluster '${CLUSTER_NAME}'..."
+  echo "Creating Kind cluster '${CLUSTER_NAME}'..."
   kind create cluster --name ${CLUSTER_NAME}
 else
   echo "Kind cluster '${CLUSTER_NAME}' already exists."
@@ -20,7 +20,7 @@ if ! kubectl get deployment cert-manager -n cert-manager >/dev/null 2>&1; then
   # This waits intelligently instead of using a hardcoded sleep
   kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout=120s
 else
-  echo "✅ Cert-Manager is already installed."
+  echo "Cert-Manager is already installed."
 fi
 
 

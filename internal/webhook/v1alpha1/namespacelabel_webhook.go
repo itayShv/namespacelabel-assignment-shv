@@ -56,14 +56,14 @@ func (v *NamespaceLabelCustomValidator) ValidateCreate(_ context.Context, obj *n
 
 	if obj.GetName() != "labels" {
 		err := fmt.Errorf("Rejected: To prevent state collisions, the NamespaceLabel CR must be named exactly 'labels'")
-		
+
 		// Use .Info instead of .Error to prevent the massive stack trace dump.
 		// We can still print the error text using err.Error() as a key-value pair.
-		namespacelabellog.Info("CR rejected due to invalid name constraint", 
+		namespacelabellog.Info("CR rejected due to invalid name constraint",
 			"attemptedName", obj.GetName(),
 			"reason", err.Error(),
 		)
-		
+
 		return nil, err
 	}
 

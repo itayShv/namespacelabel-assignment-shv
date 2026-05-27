@@ -22,11 +22,13 @@ import (
 )
 
 const (
-	namespaceLabelFinalizer     = "namespacelabel.dana.exam/finalizer"
-	managedKeysAnnotation       = "namespacelabel.dana.exam/managed-keys"
-	protectedConfigMapName      = "protected-labels"
-	protectedConfigLocation     = "default"
-	defaultProtectedPrefixesStr = "kubernetes.io/,k8s.io/"
+	namespaceLabelFinalizer       = "namespacelabel.dana.exam/finalizer"
+	managedKeysAnnotation         = "namespacelabel.dana.exam/managed-keys"
+	protectedConfigMapName        = "protected-labels"
+	protectedConfigLocation       = "default"
+	defaultProtectedPrefixesStr   = "kubernetes.io/,k8s.io/"
+	StatusMessageSuccess          = "Successfully synced all labels"
+	StatusMessageSkippedProtected = "Applied labels, but skipped protected keys"
 )
 
 // NamespaceLabelReconciler reconciles a NamespaceLabel object
@@ -257,19 +259,22 @@ func (r *NamespaceLabelReconciler) applyNewLabels(ctx context.Context, ns *corev
 func (r *NamespaceLabelReconciler) updateCRStatus(ctx context.Context, cr *namespacelabelv1alpha1.NamespaceLabel, skippedProtected bool) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx)
 
-	newApplied := true
-	newMessage := "Successfully synced all labels"
+	desiredApplied := true
+	desiredMessage := StatusMessageSuccess
 	if skippedProtected {
-		newMessage = "Applied labels, but skipped protected keys"
+		desiredMessage = StatusMessageSkippedProtected
 	}
 
 	// only make the API call if the status actually needs to change
-	if cr.Status.Applied != newApplied || cr.Status.Message != newMessage {
-		cr.Status.Applied = newApplied
-		cr.Status.Message = newMessage
+	if cr.Status.Applied != desiredApplied || cr.Status.Message != desiredMessage {
+		patchBase := client.MergeFrom(cr.DeepCopy())
 
-		if err := r.Status().Update(ctx, cr); err != nil {
-			logger.Error(err, "Failed to update CR status")
+		cr.Status.Applied = desiredApplied
+		cr.Status.Message = desiredMessage
+
+		// only change the status to avoid 409 conflict
+		if err := r.Status().Patch(ctx, cr, patchBase); err != nil {
+			logger.Error(err, "Failed to patch CR status")
 			return ctrl.Result{}, err
 		}
 	}
