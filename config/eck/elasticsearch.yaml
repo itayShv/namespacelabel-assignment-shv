@@ -1,0 +1,15 @@
+# Single-node Elasticsearch managed by the ECK operator.
+# ECK creates the StatefulSet, Services, TLS certs and the "elastic" user secret.
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: quickstart
+  namespace: default
+spec:
+  version: 9.5.5
+  nodeSets:
+  - name: default
+    count: 1
+    config:
+      # Avoids having to raise vm.max_map_count on the Kind node
+      node.store.allow_mmap: false

@@ -4,8 +4,54 @@
         "dockerfile": "Dockerfile"
     },
     "features": {
-        "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+        "ghcr.io/devcontainers/features/docker-in-docker:2": {
+            "version": "latest",
+            "moby": true
+        },        
+        "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+
     },
+        "runArgs": [
+        "--privileged",
+        "--security-opt",cat <<EOF | kubectl apply -f -
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: quickstart
+spec:
+  version: 9.5.5
+  nodeSets:
+  - name: default
+    count: 1
+    config:
+EOF   node.store.allow_mmap: false
+error: error validating "STDIN": error validating data: failed to download openapi: Get "https://127.0.0.1:43865/openapi/v2?timeout=32s": dial tcp 127.0.0.1:43865: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=falsecat <<EOF | kubectl apply -f -
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: quickstart
+spec:
+  version: 9.5.5
+  nodeSets:
+  - name: defaultcat <<EOF | kubectl apply -f -
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: quickstart
+spec:
+  version: 9.5.5
+  nodeSets:
+  - name: default
+    count: 1
+    config:
+EOF   node.store.allow_mmap: false
+error: error validating "STDIN": error validating data: failed to download openapi: Get "https://127.0.0.1:43865/openapi/v2?timeout=32s": dial tcp 127.0.0.1:43865: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false
+    count: 1
+    config:
+EOF   node.store.allow_mmap: false
+error: error validating "STDIN": error validating data: failed to download openapi: Get "https://127.0.0.1:43865/openapi/v2?timeout=32s": dial tcp 127.0.0.1:43865: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false
+        "label=disable"
+    ],
     "customizations": {
         "vscode": {
             "settings": {

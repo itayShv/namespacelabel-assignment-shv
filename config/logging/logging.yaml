@@ -1,0 +1,84 @@
+# Log pipeline managed by the Logging Operator (kube-logging.dev):
+#   Fluent Bit (per node) -> Fluentd (aggregator) -> Elasticsearch (ECK "quickstart")
+#
+# Prerequisites in the "logging" namespace (copied from ECK's secrets in "default",
+# because ClusterOutput can only read secrets from the control namespace):
+#   es-elastic-user  key "password" - the elastic user's password
+#   es-ca            key "ca.crt"   - ECK's CA, to verify Elasticsearch's TLS cert
+
+# Deploys the Fluentd aggregator; "logging" is where the operator reads ClusterFlows,
+# ClusterOutputs and their secrets from.
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: Logging
+metadata:
+  name: logging
+spec:
+  controlNamespace: logging
+  fluentd: {}
+---
+# Fluent Bit DaemonSet: tails /var/log/containers on every node and forwards to Fluentd
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: FluentbitAgent
+metadata:
+  name: logging
+spec: {}
+---
+# Where logs go: the ECK Elasticsearch cluster
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterOutput
+metadata:
+  name: elasticsearch
+  namespace: logging
+spec:
+  elasticsearch:
+    host: quickstart-es-http.default.svc
+    port: 9200
+    scheme: https
+    ssl_verify: true
+    ssl_version: TLSv1_2
+    # mountFrom (not valueFrom): ca_file expects a file path, so the secret is
+    # mounted into Fluentd and its path is put in the config
+    ca_file:
+      mountFrom:
+        secretKeyRef:
+          name: es-ca
+          key: ca.crt
+    user: elastic
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: es-elastic-user
+          key: password
+    suppress_type_name: true
+    # Daily indices named nslabel-YYYY.MM.DD
+    logstash_format: true
+    logstash_prefix: nslabel
+    buffer:
+      timekey: 1m
+      timekey_wait: 10s
+      timekey_use_utc: true
+      # Flush every 10s instead of waiting for the time chunk to close
+      flush_mode: interval
+      flush_interval: 10s
+---
+# Which logs go there: only the operator's manager container
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: ClusterFlow
+metadata:
+  name: namespacelabel-manager
+  namespace: logging
+spec:
+  match:
+  - select:
+      namespaces:
+      - namespacelabel-assignment-shv-system
+      container_names:
+      - manager
+  filters:
+  # Label keys like "app.kubernetes.io/name" would otherwise be expanded by
+  # Elasticsearch into nested objects that can clash with other labels
+  - dedot:
+      de_dot_separator: "_"
+      de_dot_nested: true
+  globalOutputRefs:
+  - elasticsearch

@@ -9,6 +9,8 @@ if ! kind get clusters | grep -q "^${CLUSTER_NAME}$"; then
   kind create cluster --name ${CLUSTER_NAME}
 else
   echo "Kind cluster '${CLUSTER_NAME}' already exists."
+  # Make sure kubectl points at it (kubeconfig may be missing, e.g. after a devcontainer rebuild)
+  kind export kubeconfig --name ${CLUSTER_NAME}
 fi
 
 #Install Cert-Manager (Required for Webhook) only if missing

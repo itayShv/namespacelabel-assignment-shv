@@ -37,6 +37,7 @@ import (
 
 	namespacelabelv1alpha1 "github.com/itayShv/namespacelabel-assignment-shv/api/v1alpha1"
 	"github.com/itayShv/namespacelabel-assignment-shv/internal/controller"
+	webhookv1 "github.com/itayShv/namespacelabel-assignment-shv/internal/webhook/v1"
 	webhookv1alpha1 "github.com/itayShv/namespacelabel-assignment-shv/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
@@ -190,6 +191,13 @@ func main() {
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
 		if err := webhookv1alpha1.SetupNamespaceLabelWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "NamespaceLabel")
+			os.Exit(1)
+		}
+	}
+	// nolint:goconst
+	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+		if err := webhookv1.SetupNamespaceWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "Namespace")
 			os.Exit(1)
 		}
 	}

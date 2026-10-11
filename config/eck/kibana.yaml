@@ -1,0 +1,12 @@
+# Kibana UI managed by the ECK operator.
+# elasticsearchRef makes ECK wire up the ES address, credentials and CA automatically.
+apiVersion: kibana.k8s.elastic.co/v1
+kind: Kibana
+metadata:
+  name: quickstart
+  namespace: default
+spec:
+  version: 9.5.5
+  count: 1
+  elasticsearchRef:
+    name: quickstart

@@ -10,6 +10,27 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /validate--v1-namespace
+  failurePolicy: Ignore
+  name: vnamespace-v1.kb.io
+  rules:
+  - apiGroups:
+    - ""
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    - DELETE
+    resources:
+    - namespaces
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /validate-namespacelabel-dana-exam-v1alpha1-namespacelabel
   failurePolicy: Fail
   name: vnamespacelabel-v1alpha1.kb.io
