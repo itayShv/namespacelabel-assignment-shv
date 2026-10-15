@@ -241,6 +241,24 @@ make test
 
 ---
 
+## CI/CD (GitHub Actions)
+
+The [`CI`](.github/workflows/ci.yml) workflow runs on every push, pull request, and `v*` tag:
+
+1. **Run tests**: `make test` (envtest unit tests).
+2. **Build and push image**: builds the manager image and pushes it to DockerHub as `<DOCKERHUB_USERNAME>/namespacelabel-controller`. Pull requests build the image but do not push it.
+
+Image tags: the branch name, `sha-<short-sha>`, `latest` for the default branch, and `X.Y.Z` / `X.Y` for `vX.Y.Z` tags.
+
+Before the first run, configure the repository under **Settings > Secrets and variables > Actions**:
+
+| Type     | Name                 | Value                                                      |
+| -------- | -------------------- | ---------------------------------------------------------- |
+| Variable | `DOCKERHUB_USERNAME` | DockerHub account or org that owns the image repository    |
+| Secret   | `DOCKERHUB_TOKEN`    | DockerHub access token with **Read & Write** scope         |
+
+---
+
 ## Cleanup & Teardown
 
 To completely remove the operator, its CRDs, and its RBAC permissions from the cluster, run:
