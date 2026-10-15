@@ -250,12 +250,12 @@ The [`CI`](.github/workflows/ci.yml) workflow runs on every push, pull request, 
 
 Image tags: the branch name, `sha-<short-sha>`, `latest` for the default branch, and `X.Y.Z` / `X.Y` for `vX.Y.Z` tags.
 
-Before the first run, configure the repository under **Settings > Secrets and variables > Actions**:
+The build job reads its DockerHub credentials from the `all` environment (**Settings > Environments > all**):
 
-| Type     | Name                 | Value                                                      |
-| -------- | -------------------- | ---------------------------------------------------------- |
-| Variable | `DOCKERHUB_USERNAME` | DockerHub account or org that owns the image repository    |
-| Secret   | `DOCKERHUB_TOKEN`    | DockerHub access token with **Read & Write** scope         |
+| Type               | Name                 | Value                                                   |
+| ------------------ | -------------------- | ------------------------------------------------------- |
+| Variable or secret | `DOCKERHUB_USERNAME` | DockerHub account or org that owns the image repository |
+| Secret             | `DOCKERHUB_TOKEN`    | DockerHub access token with **Read & Write** scope      |
 
 ---
 

@@ -3,9 +3,9 @@ name: CI
 # Runs the unit tests, then builds the manager image and pushes it to DockerHub.
 # Pull requests only test and build; nothing is pushed.
 #
-# Required repository settings (Settings > Secrets and variables > Actions):
-#   - Variable DOCKERHUB_USERNAME: DockerHub account or org that owns the repository
-#   - Secret   DOCKERHUB_TOKEN:    DockerHub access token with Read & Write scope
+# Required settings in the "all" environment (Settings > Environments > all):
+#   - DOCKERHUB_USERNAME (variable or secret): DockerHub account or org that owns the repository
+#   - DOCKERHUB_TOKEN (secret):                DockerHub access token with Read & Write scope
 
 on:
   push:
@@ -15,9 +15,6 @@ on:
   workflow_dispatch:
 
 permissions: {}
-
-env:
-  IMAGE: ${{ vars.DOCKERHUB_USERNAME }}/namespacelabel-controller
 
 jobs:
   test:
@@ -49,6 +46,10 @@ jobs:
       contents: read
     name: Build and push image
     runs-on: ubuntu-latest
+    # Holds the DockerHub credentials
+    environment: all
+    env:
+      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME || secrets.DOCKERHUB_USERNAME }}
     steps:
       - name: Clone the code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -72,7 +73,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
+          username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # Tags: branch name, short SHA, semver for v* tags, and latest for the default branch
@@ -80,7 +81,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ${{ env.IMAGE }}
+          images: ${{ env.DOCKERHUB_USERNAME }}/namespacelabel-controller
           flavor: |
             latest=false
           tags: |
