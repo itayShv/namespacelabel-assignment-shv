@@ -55,7 +55,7 @@ func (v *NamespaceLabelCustomValidator) ValidateCreate(_ context.Context, obj *n
 	namespacelabellog.Info("Validation for NamespaceLabel upon creation", "name", obj.GetName())
 
 	if obj.GetName() != "labels" {
-		err := fmt.Errorf("Rejected: To prevent state collisions, the NamespaceLabel CR must be named exactly 'labels'")
+		err := fmt.Errorf("rejected: to prevent state collisions, the NamespaceLabel CR must be named exactly 'labels'")
 
 		// Use .Info instead of .Error to prevent the massive stack trace dump.
 		// We can still print the error text using err.Error() as a key-value pair.
@@ -75,7 +75,7 @@ func (v *NamespaceLabelCustomValidator) ValidateUpdate(_ context.Context, oldObj
 	namespacelabellog.Info("Validation for NamespaceLabel upon update", "name", newObj.GetName())
 
 	if newObj.GetName() != "labels" {
-		err := fmt.Errorf("Rejected: The CR name must be exactly 'labels'. You attempted an update from '%s' to '%s'", oldObj.GetName(), newObj.GetName())
+		err := fmt.Errorf("rejected: the CR name must be exactly 'labels', you attempted an update from '%s' to '%s'", oldObj.GetName(), newObj.GetName())
 
 		// Broadcast both names to the Manager logs as structured JSON key-value pairs
 		namespacelabellog.Info("CR update rejected due to invalid name constraint",

@@ -54,7 +54,7 @@ func (r *NamespaceLabelReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	logger.Info("Starting reconciliation for the NameSpace Label Operator")
 	protectedPrefixes := r.getProtectedPrefixes(ctx)
 
-	if !namespaceLabelCR.ObjectMeta.DeletionTimestamp.IsZero() {
+	if !namespaceLabelCR.DeletionTimestamp.IsZero() {
 		return r.handleDelete(ctx, &namespaceLabelCR, protectedPrefixes)
 	}
 
@@ -209,8 +209,8 @@ func (r *NamespaceLabelReconciler) removeStaleLabels(ctx context.Context, ns *co
 		return false
 	}
 
-	oldKeys := strings.Split(oldKeysString, ",")
-	for _, oldKey := range oldKeys {
+	oldKeys := strings.SplitSeq(oldKeysString, ",")
+	for oldKey := range oldKeys {
 		_, existsInSpec := currentSpecLabels[oldKey]
 
 		// If it's a full cleanup (currentSpecLabels is nil) OR the key was removed from the CR spec
@@ -313,10 +313,10 @@ func (r *NamespaceLabelReconciler) namespaceLabelDriftPredicate() predicate.Pred
 				return false
 			}
 
-			keys := strings.Split(managedKeysStr, ",")
+			keys := strings.SplitSeq(managedKeysStr, ",")
 			// checks diffs between the namespace's labels
 
-			for _, key := range keys {
+			for key := range keys {
 				if oldNs.GetLabels()[key] != newNs.GetLabels()[key] {
 					return true
 				}

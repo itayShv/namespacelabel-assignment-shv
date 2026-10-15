@@ -54,9 +54,9 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 			// This represents CRUD: Create
 			Expect(k8sClient.Create(ctx, validCR)).Should(Succeed())
 
-			Eventually(func() map[string]string {
+			Eventually(func(g Gomega) map[string]string {
 				var ns corev1.Namespace
-				k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &ns)
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &ns)).To(Succeed())
 				return ns.Labels
 			}, timeout, interval).Should(SatisfyAll(
 				HaveKeyWithValue("team", "backend"),
@@ -74,9 +74,9 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 			}
 			Expect(k8sClient.Update(ctx, validCR)).Should(Succeed())
 
-			Eventually(func() map[string]string {
+			Eventually(func(g Gomega) map[string]string {
 				var ns corev1.Namespace
-				k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &ns)
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &ns)).To(Succeed())
 				return ns.Labels
 			}, timeout, interval).Should(SatisfyAll(
 				HaveKeyWithValue("env", "prod"),
@@ -92,9 +92,9 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 			Expect(k8sClient.Update(ctx, &currentNs)).Should(Succeed())
 
 			// Validate that the Drift Predicate puts it back
-			Eventually(func() map[string]string {
+			Eventually(func(g Gomega) map[string]string {
 				var ns corev1.Namespace
-				k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &ns)
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &ns)).To(Succeed())
 				return ns.Labels
 			}, timeout, interval).Should(HaveKeyWithValue("team", "backend"))
 
@@ -102,9 +102,9 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "labels", Namespace: nsName}, validCR)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, validCR)).Should(Succeed())
 
-			Eventually(func() map[string]string {
+			Eventually(func(g Gomega) map[string]string {
 				var ns corev1.Namespace
-				k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &ns)
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &ns)).To(Succeed())
 				return ns.Labels
 			}, timeout, interval).Should(SatisfyAll(
 				Not(HaveKey("env")),  // Managed label cleaned up
@@ -114,9 +114,9 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 			))
 
 			// Verify the tracking annotation was completely removed
-			Eventually(func() map[string]string {
+			Eventually(func(g Gomega) map[string]string {
 				var ns corev1.Namespace
-				k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &ns)
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &ns)).To(Succeed())
 				return ns.Annotations
 			}, timeout, interval).ShouldNot(HaveKey(managedKeysAnnotation))
 		})
@@ -138,9 +138,9 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 			Expect(k8sClient.Create(ctx, cr)).Should(Succeed())
 
 			// Wait for the label to appear
-			Eventually(func() map[string]string {
+			Eventually(func(g Gomega) map[string]string {
 				var fetchedNs corev1.Namespace
-				k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &fetchedNs)
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &fetchedNs)).To(Succeed())
 				return fetchedNs.Labels
 			}, timeout, interval).Should(HaveKeyWithValue("temp-key", "temp-value"))
 
@@ -150,9 +150,9 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 			Expect(k8sClient.Update(ctx, cr)).Should(Succeed())
 
 			// Verify the label was wiped from the Namespace
-			Eventually(func() map[string]string {
+			Eventually(func(g Gomega) map[string]string {
 				var fetchedNs corev1.Namespace
-				k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &fetchedNs)
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &fetchedNs)).To(Succeed())
 				return fetchedNs.Labels
 			}, timeout, interval).ShouldNot(HaveKey("temp-key"))
 		})
@@ -175,15 +175,15 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 			Expect(k8sClient.Create(ctx, cr)).Should(Succeed())
 
 			// Verify the Status fields are populated correctly indicating a partial success
-			Eventually(func() string {
+			Eventually(func(g Gomega) string {
 				var fetchedCR namespacelabelv1alpha1.NamespaceLabel
-				k8sClient.Get(ctx, types.NamespacedName{Name: "labels", Namespace: nsName}, &fetchedCR)
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "labels", Namespace: nsName}, &fetchedCR)).To(Succeed())
 				return fetchedCR.Status.Message
 			}, timeout, interval).Should(Equal("Applied labels, but skipped protected keys"))
 
-			Eventually(func() bool {
+			Eventually(func(g Gomega) bool {
 				var fetchedCR namespacelabelv1alpha1.NamespaceLabel
-				k8sClient.Get(ctx, types.NamespacedName{Name: "labels", Namespace: nsName}, &fetchedCR)
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "labels", Namespace: nsName}, &fetchedCR)).To(Succeed())
 				return fetchedCR.Status.Applied
 			}, timeout, interval).Should(BeTrue())
 		})
@@ -203,9 +203,9 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 			Expect(k8sClient.Create(ctx, cr)).Should(Succeed())
 
 			// Wait for initial sync
-			Eventually(func() map[string]string {
+			Eventually(func(g Gomega) map[string]string {
 				var fetchedNs corev1.Namespace
-				k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &fetchedNs)
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &fetchedNs)).To(Succeed())
 				return fetchedNs.Labels
 			}, timeout, interval).Should(HaveKeyWithValue("valid-key", "valid-value"))
 
@@ -226,9 +226,9 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 			Expect(k8sClient.Update(ctx, cr)).Should(Succeed())
 
 			// Verify stale-key is successfully removed because it is not in the CR's Spec
-			Eventually(func() map[string]string {
+			Eventually(func(g Gomega) map[string]string {
 				var fetchedNs corev1.Namespace
-				k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &fetchedNs)
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &fetchedNs)).To(Succeed())
 				return fetchedNs.Labels
 			}, timeout, interval).Should(SatisfyAll(
 				HaveKeyWithValue("valid-key", "new-value"),
@@ -251,9 +251,9 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 			Expect(k8sClient.Create(ctx, cr)).Should(Succeed())
 
 			// Wait for the Finalizer to be applied by the controller
-			Eventually(func() []string {
+			Eventually(func(g Gomega) []string {
 				var fetchedCR namespacelabelv1alpha1.NamespaceLabel
-				k8sClient.Get(ctx, types.NamespacedName{Name: "labels", Namespace: nsName}, &fetchedCR)
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "labels", Namespace: nsName}, &fetchedCR)).To(Succeed())
 				return fetchedCR.Finalizers
 			}, timeout, interval).Should(ContainElement(namespaceLabelFinalizer))
 
@@ -301,9 +301,9 @@ var _ = Describe("NamespaceLabel Controller Testing", func() {
 			Expect(k8sClient.Create(ctx, cr)).Should(Succeed())
 
 			// Verify the custom prefix in the ConfigMap blocks the creation of 'shviros.label'
-			Eventually(func() map[string]string {
+			Eventually(func(g Gomega) map[string]string {
 				var fetchedNs corev1.Namespace
-				k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &fetchedNs)
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: nsName}, &fetchedNs)).To(Succeed())
 				return fetchedNs.Labels
 			}, timeout, interval).Should(SatisfyAll(
 				HaveKeyWithValue("app", "my-app"),

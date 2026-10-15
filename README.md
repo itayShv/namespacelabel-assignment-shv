@@ -177,7 +177,7 @@ spec:
 ```
 
 The Kubernetes API Server will instantly reject the request, returning a custom error directly to your terminal:
-`Error from server (Forbidden): ... admission webhook "vnamespacelabel-v1alpha1.kb.io" denied the request: Rejected: To prevent state collisions, the NamespaceLabel CR must be named exactly 'labels'`
+`Error from server (Forbidden): ... admission webhook "vnamespacelabel-v1alpha1.kb.io" denied the request: rejected: to prevent state collisions, the NamespaceLabel CR must be named exactly 'labels'`
 
 ---
 
