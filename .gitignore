@@ -24,5 +24,3 @@ testbin/*
 *.swo
 *~
 .vscode/
-
-go.sum

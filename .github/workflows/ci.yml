@@ -32,13 +32,9 @@ jobs:
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
-          # go.sum is gitignored, so key the module cache on go.mod
-          cache-dependency-path: go.mod
 
       - name: Running Tests
-        run: |
-          go mod tidy
-          make test
+        run: make test
 
   build-and-push:
     needs: test
@@ -55,16 +51,6 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-
-      - name: Setup Go
-        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
-        with:
-          go-version-file: go.mod
-          cache-dependency-path: go.mod
-
-      # The Dockerfile copies go.sum, which is gitignored and must be generated
-      - name: Generate go.sum
-        run: go mod tidy
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -95,7 +81,6 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          # Use the checked-out directory (not the git context) so the generated go.sum is included
           context: .
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
